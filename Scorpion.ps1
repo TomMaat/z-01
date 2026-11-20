@@ -24,15 +24,26 @@ $inject = $nativeType.GetMethod('Inject', [Reflection.BindingFlags]'Public,Stati
 function Install-Persistence {
     if ($LaunchCommand -like '__*') { return }
     try {
-        $f = Set-WmiInstance -Namespace $NS -Class __EventFilter -Arguments @{
+        # WMI can hold half-written objects after a failed run. Clear every
+        # trace of this subscription first, then create cleanly.
+        Get-WmiObject -Namespace $NS -Class __FilterToConsumerBinding -ErrorAction SilentlyContinue |
+            Where-Object { $_.Filter -match $Filter -or $_.Consumer -match $Consumer } |
+            ForEach-Object { Remove-WmiObject -InputObject $_ -ErrorAction SilentlyContinue }
+        Get-WmiObject -Namespace $NS -Class __EventFilter -Filter "Name='$Filter'" -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-WmiObject -InputObject $_ -ErrorAction SilentlyContinue }
+        Get-WmiObject -Namespace $NS -Class CommandLineEventConsumer -Filter "Name='$Consumer'" -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-WmiObject -InputObject $_ -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 250
+
+        $f = Set-WmiInstance -Namespace $NS -Class __EventFilter -PutType CreateOnly -Arguments @{
             Name = $Filter; EventNamespace = 'root\cimv2'; QueryLanguage = 'WQL'
             Query = "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process' AND TargetInstance.Name = 'FiveM.exe'"
         } -ErrorAction Stop
-        $c = Set-WmiInstance -Namespace $NS -Class CommandLineEventConsumer -Arguments @{
+        $c = Set-WmiInstance -Namespace $NS -Class CommandLineEventConsumer -PutType CreateOnly -Arguments @{
             Name = $Consumer; CommandLineTemplate = $LaunchCommand
             RunInteractively = $true   # interactive desktop, not session 0
         } -ErrorAction Stop
-        $null = Set-WmiInstance -Namespace $NS -Class __FilterToConsumerBinding -Arguments @{
+        $null = Set-WmiInstance -Namespace $NS -Class __FilterToConsumerBinding -PutType CreateOnly -Arguments @{
             Filter = $f; Consumer = $c
         } -ErrorAction Stop
     } catch {}
